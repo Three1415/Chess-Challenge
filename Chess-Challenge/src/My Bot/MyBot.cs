@@ -7,14 +7,42 @@ public class MyBot : IChessBot
 {
     public Move Think(Board board, Timer timer)
     {
-        ulong test = AlphaSearch(board, 0, 3);
-        Console.WriteLine(Convert.ToString((long) test, 2));
+        ulong test = AlphaSearch(board, 0, 3, board.IsWhiteToMove);
+        //Console.WriteLine(Convert.ToString((long) test, 2));
 
-        Move[] moves = board.GetLegalMoves();
-        int moveIndex = (int) (((test << 32) >> 56) - 1);
-        Console.WriteLine(board.GetLegalMoves()[moveIndex].ToString());
-        return board.GetLegalMoves()[moveIndex];
+        List<Move> principalVariation = new List<Move>();
+        List<int> moveIndices = new List<int>();
+        int index = 0;
+        for (int i = 4; i>=2; i--) {
+            index = (int) (((test << (8 * i)) >> 56) - 1);
+            //Console.WriteLine("Index is: " + index.ToString());
+            moveIndices.Add(index);
+        }
+        GrabMoves(board, moveIndices, ref principalVariation, 0);
+        Console.Write("Principal variation is: ");
+        foreach(Move m in principalVariation) {
+            Console.Write(m.ToString() + ", ");
+        }
+        Console.Write("\n");
+        return principalVariation[0];
     }
+
+    void GrabMoves(Board b, List<int> moveIndices, ref List<Move> principalVariation, int pos) {
+        if(pos >= moveIndices.Count) {
+            return;
+        }
+        Move[] moves = b.GetLegalMoves();
+        int index = Math.Max(moveIndices[pos], 0);
+        if(moves.Length == 0) {
+            return;
+        }
+        Move move = moves[index];
+        principalVariation.Add(move);
+        b.MakeMove(move);
+        GrabMoves(b, moveIndices, ref principalVariation, pos + 1);
+        b.UndoMove(move);
+    }
+
     /*
     Initial depthRemaining value must be odd for this simplified search to work.
     Essentially, by only ever looking at odd-ply variations, we effectively run just the
@@ -37,27 +65,32 @@ public class MyBot : IChessBot
     and don't have to write a separate RootSearch() function either, greatly reducing token usage in exchange
     for making this eldritch abomination.
     */
-    ulong AlphaSearch(Board board, ulong boundingEval, int depthRemaining) {
+    ulong AlphaSearch(Board board, ulong boundingEval, int depthRemaining, bool isOurColorWhite) {
         //Console.WriteLine("boundingEval is " + boundingEval.ToString());
-        ulong currentEval = 0;
-        if(depthRemaining==0){
-            //Console.WriteLine("Board evaluation is: " + Convert.ToString(Evaluate(board)));
-            //Console.WriteLine("Shifted board evaluation is: " + Convert.ToString((long) (((ulong) Evaluate(board)) << 48), 2));
-            return ((ulong) Evaluate(board)) << 48;
-        }
+        Move[] legalMoves = board.GetLegalMoves();
+
         //Odd depths are our moves, even depth are our opponents'. Alpha search will work by finding
         //the move that maximizes our eval on our turn, then finding the move for our opponent 
         //that minimizes the best evals we can reach. 
         bool isMaxing = depthRemaining%2==1;
+
         ulong moveIndex = 0;
-        foreach(Move m in board.GetLegalMoves()){
+        ulong currentEval = 0;
+
+        if(depthRemaining==0 || legalMoves.Length == 0 || board.IsDraw()){
+            //Console.WriteLine("Board evaluation is: " + Convert.ToString(Evaluate(board)));
+            //Console.WriteLine("Shifted board evaluation is: " + Convert.ToString((long) (((ulong) Evaluate(board)) << 48), 2));
+            return ((ulong) Evaluate(board, isOurColorWhite) ) << 48;
+        }
+
+        foreach(Move m in legalMoves){
             moveIndex++;
             //Console.WriteLine("Depth remaining is: " + depthRemaining.ToString());
             //Console.WriteLine("Move is: " + m.ToString());
             board.MakeMove(m);
             //The first evaluation returned will have 48 trailing zeroes in its binary representation;
             //stick the moveIndex for this move into its spot in the eval.
-            currentEval = AlphaSearch(board, boundingEval, depthRemaining - 1) + (moveIndex << (6 - depthRemaining) * 8);
+            currentEval = AlphaSearch(board, boundingEval, depthRemaining - 1, isOurColorWhite) + (moveIndex << (6 - depthRemaining) * 8);
             //Console.WriteLine("Current move index is: " + Convert.ToString((long) moveIndex, 2));
             //Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
             board.UndoMove(m);
@@ -89,7 +122,7 @@ public class MyBot : IChessBot
             bool isSibling = currentEval << 24 == boundingEval << 24;
             bool isSecondCousin = currentEval << 40 == boundingEval << 40 & !(currentEval << 32 == boundingEval << 32);
             if (isMaxing && currentEval > boundingEval && !(isSibling || isSecondCousin)) {
-                Console.WriteLine("Pruning.");
+                //Console.WriteLine("Pruning.");
                 return boundingEval;
             } 
             /*
@@ -109,7 +142,7 @@ public class MyBot : IChessBot
             boundingEval = isMaxing ? Math.Max(currentEval, boundingEval) : Math.Min(currentEval, boundingEval);
                
         }   
-        Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
+        //Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
         return boundingEval;
     }
     
@@ -117,14 +150,14 @@ public class MyBot : IChessBot
         //return (ushort) board.GetLegalMoves().Length;
     //}
 
-    int Evaluate(Board board)
+    int Evaluate(Board board, bool isOurColorWhite)
     {
-        int eval = 0;
+        int eval = 1000;
+        bool isOurMove = isOurColorWhite == board.IsWhiteToMove && board.IsInCheck();
 
-        //Obviously if the player to move is in checkmate, this is the worst possible outcome for them, so return max negative value.
         if (board.IsInCheckmate())
         {
-            eval = 0;
+            eval = isOurColorWhite == board.IsWhiteToMove ? 0 : 10000;
         }
         else if (board.IsDraw())
         {
@@ -132,7 +165,9 @@ public class MyBot : IChessBot
         }
         else { 
             //Difference in material value
-            eval = 1000 + MaterialPointValue(board, !board.IsWhiteToMove) - MaterialPointValue(board, board.IsWhiteToMove);
+            eval += 75 * (MaterialPointValue(board, isOurColorWhite) - MaterialPointValue(board, !isOurColorWhite));
+            eval += board.GetLegalMoves().Length;
+            eval +=  isOurMove != board.IsInCheck() ? 30 : 0;
         }
 
         return eval;
