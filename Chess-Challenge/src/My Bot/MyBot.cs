@@ -3,13 +3,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+static class Constants { 
+    static public ulong EVAL_BITMASK = 0b1111111111111111000000000000000000000000000000000000000000000000;
+}
 public class MyBot : IChessBot
 {
     public Move Think(Board board, Timer timer)
     {
-        int depth = 2;
-        ulong startingVal = 0b1111111111111111000000010000000000000000000000000000000000000000;
-        ulong test = HalfBetaSearch(board, startingVal, depth, board.IsWhiteToMove);
+        int depth = 4;
+        ulong test = HalfBetaSearch(board, 0, depth, board.IsWhiteToMove);
         //Console.WriteLine(Convert.ToString((long) test, 2));
 
         List<Move> principalVariation = new List<Move>();
@@ -46,6 +48,7 @@ public class MyBot : IChessBot
         b.UndoMove(move);
     }
 
+    /*
     bool isFirstUniqueMoveAtOddMoveNumber(ulong eval1, ulong eval2) {
         //Console.WriteLine(Convert.ToString((long) eval1,2));
         //Console.WriteLine(Convert.ToString((long) eval2,2));
@@ -67,7 +70,7 @@ public class MyBot : IChessBot
         //Console.WriteLine(j);
         return j%2==1;
     }
-
+    */
     /*
     Initial depthRemaining value must be even for this simplified search to work.
     Essentially, by only ever looking at even-ply variations, we effectively run just the
@@ -101,6 +104,7 @@ public class MyBot : IChessBot
 
         ulong moveIndex = 0;
         ulong currentEval = 0;
+        ulong innerEval = UInt64.MaxValue;
 
         if(depthRemaining==0 || legalMoves.Length == 0 || board.IsDraw()){
             //Console.WriteLine("Board evaluation is: " + Convert.ToString(Evaluate(board)));
@@ -110,13 +114,13 @@ public class MyBot : IChessBot
 
         foreach(Move m in legalMoves){
             moveIndex++;
-            Console.WriteLine("Depth remaining is: " + depthRemaining.ToString());
+            //Console.WriteLine("Depth remaining is: " + depthRemaining.ToString());
             //Console.WriteLine("Move is: " + m.ToString());
             board.MakeMove(m);
             //The first evaluation returned will have 48 trailing zeroes in its binary representation;
             //stick the moveIndex for this move into its spot in the eval.
             currentEval = HalfBetaSearch(board, boundingEval, depthRemaining - 1, isOurColorWhite) + (moveIndex << ((6 - depthRemaining) * 8));
-            //Console.WriteLine("Current move index is: " + Convert.ToString((long) moveIndex, 2));
+            //Console.WriteLine("Current move index is: " + Convert.ToString((long) moveIndex, 10));
 
             /*
             if (depthRemaining == 3) {
@@ -185,11 +189,11 @@ public class MyBot : IChessBot
             Since this accounts for an overwhelming majority of nodes, almost everything becomes unpruneable and 
             we lose all the benefits of alpha-beta, so I'll stick to even depths only here.
             */
-            bool isSibling = currentEval << 24 == boundingEval << 24;
+            //bool isSibling = currentEval << 24 == boundingEval << 24;
             //bool isNotSecondCousin = !(currentEval << 40 == boundingEval << 40 & !(currentEval << 32 == boundingEval << 32));
             //bool isNotSiblingOrSecondCousin = isNotSibling || isNotSecondCousin;
 
-            bool is1st3rdOr5thCousin = isFirstUniqueMoveAtOddMoveNumber(currentEval, boundingEval);
+            //bool is1st3rdOr5thCousin = isFirstUniqueMoveAtOddMoveNumber(currentEval, boundingEval);
             
             //Console.WriteLine("isNotSiblingOrSecondCousin is: " + isNotSiblingOrSecondCousin.ToString());
             //Console.WriteLine("is1st3rdOr5thCousin is: " + is1st3rdOr5thCousin.ToString());
@@ -202,12 +206,12 @@ public class MyBot : IChessBot
                 return boundingEval;
             } 
             */
-                   
-            if (isMinimizing && currentEval < boundingEval && !isSibling) {
+               
+            if (isMinimizing && currentEval < (boundingEval & Constants.EVAL_BITMASK)) {
                 //Console.WriteLine("Pruning.");
-                Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
-                Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
-                return boundingEval;
+                //Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
+                //Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
+                return boundingEval & Constants.EVAL_BITMASK;
             } 
             
 
@@ -219,18 +223,20 @@ public class MyBot : IChessBot
             best boundingEval we'll be generated; or
             B) It doesn't, in which case the best boundingEval generated somewhere else will eventually replace it.
             */
-            boundingEval = moveIndex==1 ? currentEval : boundingEval;
+            
+            boundingEval = moveIndex==1 && !isMinimizing ? currentEval : boundingEval;
             //Console.WriteLine(Convert.ToString((long) boundingEval,2));
 
             //Update bounding eval if we haven't pruned the node: If it's our move, we're trying to find the
             //maximum eval we can get (e.g., the best move for us). If it's our opponent's move, they're
             //trying to find the move with the lowest eval (e.g., their best move, in the sense it puts us in the 
             //worst position). As the loop iterates this will give the best move for each player at a single node.
-            boundingEval = isMinimizing ? Math.Min(currentEval, boundingEval) : Math.Max(currentEval, boundingEval);
+            boundingEval = isMinimizing ? boundingEval : Math.Max(currentEval, boundingEval);
+            innerEval = isMinimizing ? Math.Min(currentEval, innerEval) : innerEval;
                
         }   
         //Console.WriteLine("Unpruned bounding eval is: " + Convert.ToString((long) boundingEval, 2));
-        return boundingEval;
+        return isMinimizing ? innerEval : boundingEval;
     }
     
     //ushort Evaluate(Board board) {
@@ -240,15 +246,15 @@ public class MyBot : IChessBot
     int Evaluate(Board board, bool isOurColorWhite)
     {
         int eval = 1000;
-        bool isOurMove = isOurColorWhite == board.IsWhiteToMove && board.IsInCheck();
+        bool isOurMove = isOurColorWhite == board.IsWhiteToMove;
 
         if (board.IsInCheckmate())
         {
-            eval = isOurColorWhite == board.IsWhiteToMove ? 0 : 10000;
+            return eval = isOurMove ? 0 : UInt16.MaxValue;
         }
         else if (board.IsDraw())
         {
-            eval = 0;
+            return eval = 0;
         }
         else { 
             //Difference in material value
