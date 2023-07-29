@@ -4,7 +4,8 @@ using System.Collections.Generic;
 using System.Linq;
 
 static class Constants { 
-    static public ulong EVAL_BITMASK = 0b1111111111111111000000000000000000000000000000000000000000000000;
+    static public ulong EVAL_BITMASK = 0xFFFF000000000000;
+    static public ulong MOVE_BITMASK = 0xFFF;
 }
 public class MyBot : IChessBot
 {
