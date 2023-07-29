@@ -3,17 +3,27 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-static class Constants { 
-    static public ulong EVAL_BITMASK = 0xFFFF000000000000;
-    static public ulong MOVE_BITMASK = 0xFFF;
-}
 public class MyBot : IChessBot
 {
+    //Bitmasks for, in order, the eval, then the 6th, 5th, 4th, etc.
+    //moves returned by AlphaBeta
+    static public ulong[] BITMASKS = new ulong[]{
+        0xFFFF000000000000,
+        0x0000FF0000000000,
+        0x000000FF00000000,
+        0x00000000FF000000,
+        0x0000000000FF0000,
+        0x000000000000FF00,
+        0x00000000000000FF
+
+    };
+    public bool isBotWhite;
     public Move Think(Board board, Timer timer)
-    {
+    {   
+        isBotWhite = board.IsWhiteToMove;
         int depth = 4;
-        ulong test = HalfBetaSearch(board, 0, depth, board.IsWhiteToMove);
-        //Console.WriteLine(Convert.ToString((long) test, 2));
+        ulong test = AlphaBeta(board, 0, UInt64.MaxValue, depth, depth%2==1);
+        Console.WriteLine(Convert.ToString((long) test, 2));
 
         List<Move> principalVariation = new List<Move>();
         List<int> moveIndices = new List<int>();
@@ -24,11 +34,13 @@ public class MyBot : IChessBot
             moveIndices.Add(index);
         }
         GrabMoves(board, moveIndices, ref principalVariation, 0);
+        
         Console.Write("Principal variation is: ");
         foreach(Move m in principalVariation) {
             Console.Write(m.ToString() + ", ");
         }
         Console.Write("\n");
+        
         return principalVariation[0];
     }
 
@@ -41,7 +53,7 @@ public class MyBot : IChessBot
         if(moves.Length == 0) {
             return;
         }
-        Console.WriteLine("Index is: " + index.ToString());
+        //Console.WriteLine("Index is: " + index.ToString());
         Move move = moves[index];
         principalVariation.Add(move);
         b.MakeMove(move);
@@ -49,29 +61,6 @@ public class MyBot : IChessBot
         b.UndoMove(move);
     }
 
-    /*
-    bool isFirstUniqueMoveAtOddMoveNumber(ulong eval1, ulong eval2) {
-        //Console.WriteLine(Convert.ToString((long) eval1,2));
-        //Console.WriteLine(Convert.ToString((long) eval2,2));
-        ulong andedEval = eval1 & eval2;
-        //Console.WriteLine(Convert.ToString((long) andedEval,2));
-        int j = 1;
-        //If the first eight bits are zero, the two moves at that byte were the same;
-        //break if we've searched all 6 moves. 
-        while((andedEval & 63ul) == 0 && j < 7) {
-            //If they were the same, continue shifting right, which puts the next ANDed move
-            //in the first eight bits of andedEval
-            andedEval>>=8;
-            //Console.WriteLine(Convert.ToString((long) andedEval, 2));
-            //Increment our counter to keep track of oddness/evenness
-            j++;
-        }
-        //If the first eight bits weren't zero, the jth move was not the same, so immediately
-        //return whether j was even or odd
-        //Console.WriteLine(j);
-        return j%2==1;
-    }
-    */
     /*
     Initial depthRemaining value must be even for this simplified search to work.
     Essentially, by only ever looking at even-ply variations, we effectively run just the
@@ -94,23 +83,19 @@ public class MyBot : IChessBot
     and don't have to write a separate RootSearch() function either, greatly reducing token usage in exchange
     for making this eldritch abomination.
     */
-    ulong HalfBetaSearch(Board board, ulong boundingEval, int depthRemaining, bool isOurColorWhite) {
+    ulong AlphaBeta(Board board, ulong alpha, ulong beta, int depthRemaining, bool isMinimizing) {
         //Console.WriteLine("boundingEval is " + boundingEval.ToString());
         Move[] legalMoves = board.GetLegalMoves();
 
-        //Odd depths are our moves, even depth are our opponents'. Beta search will work by finding
-        //the move that minimizes our eval on our opponent's turn, then finding the move for ourselves 
-        //that maximizes the best evals we can reach. 
-        bool isMinimizing = depthRemaining%2==1;
-
         ulong moveIndex = 0;
-        ulong currentEval = 0;
-        ulong innerEval = UInt64.MaxValue;
+        //ulong moveBits;
+        ulong currentEval;
+        ulong boundingEval;
 
-        if(depthRemaining==0 || legalMoves.Length == 0 || board.IsDraw()){
+        if(depthRemaining==0 || legalMoves.Length == 0 || board.IsDraw() || board.IsInCheckmate()){
             //Console.WriteLine("Board evaluation is: " + Convert.ToString(Evaluate(board)));
             //Console.WriteLine("Shifted board evaluation is: " + Convert.ToString((long) (((ulong) Evaluate(board)) << 48), 2));
-            return ((ulong) Evaluate(board, isOurColorWhite) ) << 48;
+            return ((ulong) Evaluate(board)) << 48;
         }
 
         foreach(Move m in legalMoves){
@@ -118,101 +103,37 @@ public class MyBot : IChessBot
             //Console.WriteLine("Depth remaining is: " + depthRemaining.ToString());
             //Console.WriteLine("Move is: " + m.ToString());
             board.MakeMove(m);
-            //The first evaluation returned will have 48 trailing zeroes in its binary representation;
-            //stick the moveIndex for this move into its spot in the eval.
-            currentEval = HalfBetaSearch(board, boundingEval, depthRemaining - 1, isOurColorWhite) + (moveIndex << ((6 - depthRemaining) * 8));
+            //Recursively call this function again at 1 lower depth, informing the 
+            //eval function that the color has flipped
+            currentEval = AlphaBeta(board, alpha & BITMASKS[0], beta & BITMASKS[0], depthRemaining - 1, !isMinimizing);
             //Console.WriteLine("Current move index is: " + Convert.ToString((long) moveIndex, 10));
 
-            /*
-            if (depthRemaining == 3) {
-                Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
-                Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
+            
+            if (depthRemaining == 4) {
+                //Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
+                //Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
             }
-            */
+            
+            
             board.UndoMove(m);
+            if (currentEval == 0){
+                //Console.WriteLine("Continuing");
+                continue;
+            }
+            //The first evaluation returned will have 48 trailing zeroes in its binary representation;
+            //zero out the moveIndex in that position, then stick the moveIndex for this move into 
+            //that spot in the eval.
+            currentEval += moveIndex << ((6 - depthRemaining) * 8);
 
-            /*
-            Nodes will will never be pruned by alpha-beta if they share the a (2n + 1)th parent, e.g.,
-            if 2n + 1 ply before each move, we were in the same position. Thus, with depth limited to 6 ply,
-            any depth 6 node will have a "parent" at depth 5, a "great-grandparent" at depth 3,
-            and a "great-great-grandparent" at depth 1.
-
-            This means that we'll have
-                [16 eval bits] [8 bits: This move] [8 bits: Same move 4] [8 bits: Same move 3] etc.
-            meaning the last 40 bits will be the same if the two nodes share a parent. If they share
-            a great-grandparent, they'll share the last 24 bits, and if they share a great-great-great-grandparent,
-            they'll share the last 8. 
             
-            Note that before the first search completes, 
-            these bits will all be zero, since we haven't looped back through the recursion, but by 
-            definition for how the search works, they have to be filled in before the parent or
-            great-grandparent comparison becomes relevant, so it's fine.
-
-            By avoiding pruning under this condition, we can reuse the bounding eval repeatedly, getting
-            us our principal variation essentially for free in terms of token count since we don't have to
-            implement a separate root search. 
-            
-        
-            Shifting by 64 - 40 = 24, 64 - 24 = 40, and 64 - 8 = 56 and comparing would determine if the bounding eval
-            was set by an appropriately related node. Note that being a "first cousin" (e.g., sharing
-            a node 2 levels above in the tree) or a "third cousin" (e.g., sharing a node 4 levels above) 
-            DOES allow pruning, so testing for the shared great-grandparent, etc. is not sufficient.
-
-            However, if you work all the truth tables out, it turns out you prune iff the *first* unique
-            move separating the two nodes was at odd move count, e.g., move 1, move 3, or move 5.
-
-            A final note: The overwhelming majority of nodes are pruneable. In general, the ratio of unpruneable
-            nodes to the total number of nodes, given a branching ratio b and a depth d is 
-                r = (b + (b^3 - b^2) + (b^5 - b^4) + ... + (b^n - b^(n-1))/b^d
-            where n = d if d odd, n = d - 1 if d even. Each term gives the number of jth cousins. The numerator is
-            an alternating power series, e.g., 
-                numerator = -sum_{j = 1}^n (-b)^(j) = b/(1+b) * (1-(-b)^n) = b/(1+b) (1 + b^n)
-            since n is always odd. This gives
-                r = b/(1 + b) (1 + b^n)/b^d
-            For a binary tree, with depth d= 6, we have b = 2 and n = 5; this gives r = 0.343.
-            But in chess, b is more like 30, so 
-                r ~= 0.0323
-            This looks familiar, because in the limit of large b, and for d even, we have
-                r ~ 1/b
-            So only 1 in 30 or so nodes is unpruneable. Note that the other 29 won't necessarily be pruned--the
-            conditions on the eval still have to be met--but that was true for the normal alpha-beta algorithm too.
-            Thus, this simplification to the alpha-beta algorithm doesn't meaningfully affect its performance; 
-            the original has only 3.3% advantage over BetaSearch() in pruning efficiency. 
-            This is the magic of this algorithm: Somehow, it gets *better* as the branching ratio increases 
-            (relative to the original, at least)--in chess, we'll only take a marginal performance hit even though we've
-            deleted half the pruning algorithm! And if the branching ratio drops low enough that we would perform noticeably
-            worse, well, we probably don't need the performance anyway. An acceptable tradeoff, I think.
-
-            A final-er note: This minor efficiency hit becomes major if you try odd depths rather than even ones. 
-            In this case the asymptotic limit is
-                r ~ (b-1)/b
-            rather than r ~ 1/b, since now moves that share only the starting position aren't pruneable any longer. 
-            Since this accounts for an overwhelming majority of nodes, almost everything becomes unpruneable and 
-            we lose all the benefits of alpha-beta, so I'll stick to even depths only here.
-            */
-            //bool isSibling = currentEval << 24 == boundingEval << 24;
-            //bool isNotSecondCousin = !(currentEval << 40 == boundingEval << 40 & !(currentEval << 32 == boundingEval << 32));
-            //bool isNotSiblingOrSecondCousin = isNotSibling || isNotSecondCousin;
-
-            //bool is1st3rdOr5thCousin = isFirstUniqueMoveAtOddMoveNumber(currentEval, boundingEval);
-            
-            //Console.WriteLine("isNotSiblingOrSecondCousin is: " + isNotSiblingOrSecondCousin.ToString());
-            //Console.WriteLine("is1st3rdOr5thCousin is: " + is1st3rdOr5thCousin.ToString());
-            //Console.WriteLine("");
-            /*
-            if (isMinimizing && currentEval < boundingEval && isFirstUniqueMoveAtOddMoveNumber(currentEval, boundingEval)) {
-                //Console.WriteLine("Pruning.");
-                //Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
-                //Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
-                return boundingEval;
-            } 
-            */
-               
-            if (isMinimizing && currentEval < (boundingEval & Constants.EVAL_BITMASK)) {
+            //boundingEval = (isMinimizing ? alpha : beta) & Constants.BITMASKS[0];
+            boundingEval = isMinimizing ? alpha : beta;
+            //If either we're minimizing and the search fails low, or maximizing and the search fails high
+            if (isMinimizing == currentEval < boundingEval) {
                 //Console.WriteLine("Pruning.");
                 //Console.WriteLine("Current eval is: " + Convert.ToString((long) currentEval, 2));
                 //Console.WriteLine("Bounding eval is: " + Convert.ToString((long) boundingEval, 2));
-                return boundingEval & Constants.EVAL_BITMASK;
+                return 0;
             } 
             
 
@@ -225,41 +146,37 @@ public class MyBot : IChessBot
             B) It doesn't, in which case the best boundingEval generated somewhere else will eventually replace it.
             */
             
-            boundingEval = moveIndex==1 && !isMinimizing ? currentEval : boundingEval;
-            //Console.WriteLine(Convert.ToString((long) boundingEval,2));
+            //boundingEval = moveIndex==1 && !isMinimizing ? currentEval : boundingEval;
 
             //Update bounding eval if we haven't pruned the node: If it's our move, we're trying to find the
             //maximum eval we can get (e.g., the best move for us). If it's our opponent's move, they're
             //trying to find the move with the lowest eval (e.g., their best move, in the sense it puts us in the 
             //worst position). As the loop iterates this will give the best move for each player at a single node.
-            boundingEval = isMinimizing ? boundingEval : Math.Max(currentEval, boundingEval);
-            innerEval = isMinimizing ? Math.Min(currentEval, innerEval) : innerEval;
+            beta = isMinimizing ?  Math.Min(currentEval, beta) : beta;
+            alpha = isMinimizing ? alpha : Math.Max(currentEval, alpha);
                
         }   
         //Console.WriteLine("Unpruned bounding eval is: " + Convert.ToString((long) boundingEval, 2));
-        return isMinimizing ? innerEval : boundingEval;
+        return isMinimizing ? beta : alpha;
     }
-    
-    //ushort Evaluate(Board board) {
-        //return (ushort) board.GetLegalMoves().Length;
-    //}
 
-    int Evaluate(Board board, bool isOurColorWhite)
+    int Evaluate(Board board)
     {
-        int eval = 1000;
-        bool isOurMove = isOurColorWhite == board.IsWhiteToMove;
+        int eval = 0x7FFF;
+        bool isOurMove = isBotWhite == board.IsWhiteToMove;
 
         if (board.IsInCheckmate())
         {
-            return eval = isOurMove ? 0 : UInt16.MaxValue;
+            //Console.WriteLine("Checkmate check");
+            return eval = isOurMove ? 1 : UInt16.MaxValue;
         }
         else if (board.IsDraw())
         {
-            return eval = 0;
+            return eval = 1;
         }
         else { 
             //Difference in material value
-            eval += 75 * (MaterialPointValue(board, isOurColorWhite) - MaterialPointValue(board, !isOurColorWhite));
+            eval += 75 * (MaterialPointValue(board, isBotWhite) - MaterialPointValue(board, !isBotWhite));
             eval += board.GetLegalMoves().Length;
             eval +=  isOurMove != board.IsInCheck() ? 30 : 0;
         }
